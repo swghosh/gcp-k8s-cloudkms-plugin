@@ -39,20 +39,21 @@ const (
 
 // Plugin is a CloudKMS plugin for K8S.
 type Plugin struct {
-	keyService       *cloudkms.ProjectsLocationsKeyRingsCryptoKeysService
-	keyURI           string
-	pathToUnixSocket string
+	// keyService       *cloudkms.ProjectsLocationsKeyRingsCryptoKeysService
+	localAesKmsService *LocalAESKMSService
+	keyURI             string
+	pathToUnixSocket   string
 	// Embedding these only to shorten access to fields.
 	net.Listener
 	*grpc.Server
 }
 
 // New constructs Plugin.
-func New(keyService *cloudkms.ProjectsLocationsKeyRingsCryptoKeysService, keyURI, pathToUnixSocketFile string) *Plugin {
+func New(aesSecretKey, keyURI, pathToUnixSocketFile string) *Plugin {
 	return &Plugin{
-		keyService:       keyService,
-		keyURI:           keyURI,
-		pathToUnixSocket: pathToUnixSocketFile,
+		localAesKmsService: NewLocalAESKMSService(aesSecretKey),
+		keyURI:             keyURI,
+		pathToUnixSocket:   pathToUnixSocketFile,
 	}
 }
 
@@ -68,18 +69,13 @@ func (g *Plugin) Encrypt(ctx context.Context, request *EncryptRequest) (*Encrypt
 	defer recordCloudKMSOperation("encrypt", time.Now())
 
 	req := &cloudkms.EncryptRequest{Plaintext: base64.StdEncoding.EncodeToString(request.Plain)}
-	resp, err := g.keyService.Encrypt(g.keyURI, req).Context(ctx).Do()
+	resp, err := g.localAesKmsService.Encrypt(req)
 	if err != nil {
 		cloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
 		return nil, err
 	}
 
-	cipher, err := base64.StdEncoding.DecodeString(resp.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-
-	return &EncryptResponse{Cipher: []byte(cipher)}, nil
+	return &EncryptResponse{Cipher: []byte(resp.Ciphertext)}, nil
 }
 
 // Decrypt decrypts payload supplied by K8S API Server.
@@ -91,18 +87,13 @@ func (g *Plugin) Decrypt(ctx context.Context, request *DecryptRequest) (*Decrypt
 	req := &cloudkms.DecryptRequest{
 		Ciphertext: base64.StdEncoding.EncodeToString(request.Cipher),
 	}
-	resp, err := g.keyService.Decrypt(g.keyURI, req).Context(ctx).Do()
+	resp, err := g.localAesKmsService.Decrypt(req)
 	if err != nil {
 		cloudKMSOperationalFailuresTotal.WithLabelValues("decrypt").Inc()
 		return nil, err
 	}
 
-	plain, err := base64.StdEncoding.DecodeString(resp.Plaintext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode from base64, error: %v", err)
-	}
-
-	return &DecryptResponse{Plain: []byte(plain)}, nil
+	return &DecryptResponse{Plain: []byte(resp.Plaintext)}, nil
 }
 
 func (g *Plugin) setupRPCServer() error {
