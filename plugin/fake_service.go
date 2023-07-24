@@ -3,8 +3,6 @@ package plugin
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
-	"io"
 
 	"google.golang.org/api/cloudkms/v1"
 )
@@ -12,7 +10,6 @@ import (
 type LocalAESKMSService struct {
 	aesKeyPhrase string
 	aesBlock     cipher.Block
-	gcmInstance  cipher.AEAD
 }
 
 func (l *LocalAESKMSService) start() error {
@@ -21,39 +18,20 @@ func (l *LocalAESKMSService) start() error {
 		return err
 	}
 
-	gcmInstance, err := cipher.NewGCM(aesBlock)
-	if err != nil {
-		return err
-	}
-
 	l.aesBlock = aesBlock
-	l.gcmInstance = gcmInstance
-
 	return nil
 }
 
-func (l *LocalAESKMSService) encrypt(value []byte) ([]byte, error) {
-	nonce := make([]byte, l.gcmInstance.NonceSize())
-	_, _ = io.ReadFull(rand.Reader, nonce)
-
-	cipheredText := l.gcmInstance.Seal(nil, nonce, value, nil)
-	return cipheredText, nil
+func (l *LocalAESKMSService) encrypt(plainText []byte) ([]byte, error) {
+	encText := make([]byte, len(plainText))
+	l.aesBlock.Encrypt(encText, plainText)
+	return encText, nil
 }
 
-func (l *LocalAESKMSService) decrypt(ciphered []byte) ([]byte, error) {
-	gcmInstance, err := cipher.NewGCM(l.aesBlock)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := l.gcmInstance.NonceSize()
-	nonce, cipheredText := ciphered[:nonceSize], ciphered[nonceSize:]
-
-	originalText, err := gcmInstance.Open(nil, nonce, cipheredText, nil)
-	if err != nil {
-		return nil, err
-	}
-	return originalText, nil
+func (l *LocalAESKMSService) decrypt(encText []byte) ([]byte, error) {
+	plainText := make([]byte, len(encText))
+	l.aesBlock.Decrypt(plainText, encText)
+	return plainText, nil
 }
 
 func NewLocalAESKMSService(key string) *LocalAESKMSService {
