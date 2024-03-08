@@ -28,6 +28,7 @@ import (
 
 	"google.golang.org/api/cloudkms/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 const (
@@ -101,14 +102,18 @@ func (g *Plugin) setupRPCServer() error {
 		return err
 	}
 
-	listener, err := net.Listen(netProtocol, g.pathToUnixSocket)
+	// listener, err := net.Listen(netProtocol, g.pathToUnixSocket)
+	listener, err := net.Listen("tcp", ":1240")
 	if err != nil {
 		return fmt.Errorf("failed to start listener, error: %v", err)
 	}
 	g.Listener = listener
-	glog.Infof("Listening on unix domain socket: %s", g.pathToUnixSocket)
+	// glog.Infof("Listening on unix domain socket: %s", g.pathToUnixSocket)
+	glog.Infof("Listening on address: %s", listener.Addr().String())
 
 	g.Server = grpc.NewServer()
+	// Register reflection service on gRPC server.
+	reflection.Register(g.Server)
 	RegisterKeyManagementServiceServer(g.Server, g)
 
 	return nil
