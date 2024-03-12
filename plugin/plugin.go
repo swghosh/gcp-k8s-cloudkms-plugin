@@ -17,7 +17,6 @@ package plugin
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -68,7 +67,7 @@ func (g *Plugin) Encrypt(ctx context.Context, request *EncryptRequest) (*Encrypt
 	// TODO(immutablet) check the version of the request and issue a warning if the version is not what the plugin expects.
 	defer recordCloudKMSOperation("encrypt", time.Now())
 
-	req := &cloudkms.EncryptRequest{Plaintext: base64.StdEncoding.EncodeToString(request.Plain)}
+	req := &cloudkms.EncryptRequest{Plaintext: string(request.Plain)}
 	resp, err := g.localAesKmsService.Encrypt(req)
 	if err != nil {
 		cloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
@@ -85,7 +84,7 @@ func (g *Plugin) Decrypt(ctx context.Context, request *DecryptRequest) (*Decrypt
 	defer recordCloudKMSOperation("decrypt", time.Now())
 
 	req := &cloudkms.DecryptRequest{
-		Ciphertext: base64.StdEncoding.EncodeToString(request.Cipher),
+		Ciphertext: string(request.Cipher),
 	}
 	resp, err := g.localAesKmsService.Decrypt(req)
 	if err != nil {

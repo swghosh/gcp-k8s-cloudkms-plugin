@@ -3,13 +3,15 @@ package plugin
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
+	"fmt"
 
 	"google.golang.org/api/cloudkms/v1"
 )
 
 type LocalAESKMSService struct {
 	aesKeyPhrase string
-	aesBlock     cipher.Block
+	aead         cipher.AEAD
 }
 
 func (l *LocalAESKMSService) start() error {
@@ -18,20 +20,36 @@ func (l *LocalAESKMSService) start() error {
 		return err
 	}
 
-	l.aesBlock = aesBlock
+	g, err := cipher.NewGCM(aesBlock)
+	if err != nil {
+		return err
+	}
+	l.aead = g
 	return nil
 }
 
-func (l *LocalAESKMSService) encrypt(plainText []byte) ([]byte, error) {
-	encText := make([]byte, len(plainText))
-	l.aesBlock.Encrypt(encText, plainText)
-	return encText, nil
+func (l *LocalAESKMSService) encrypt(plaintext []byte) ([]byte, error) {
+	nonceSize := l.aead.NonceSize()
+
+	result := make([]byte, nonceSize+l.aead.Overhead()+len(plaintext))
+	n, err := rand.Read(result[:nonceSize])
+	if err != nil {
+		return nil, err
+	}
+	if n != nonceSize {
+		return nil, fmt.Errorf("unable to read sufficient random bytes")
+	}
+
+	cipherText := l.aead.Seal(result[nonceSize:nonceSize], result[:nonceSize], plaintext, nil)
+
+	return result[:nonceSize+len(cipherText)], nil
 }
 
-func (l *LocalAESKMSService) decrypt(encText []byte) ([]byte, error) {
-	plainText := make([]byte, len(encText))
-	l.aesBlock.Decrypt(plainText, encText)
-	return plainText, nil
+func (l *LocalAESKMSService) decrypt(ciphertext []byte) ([]byte, error) {
+	nonceSize := l.aead.NonceSize()
+	data := ciphertext
+
+	return l.aead.Open(nil, data[:nonceSize], data[nonceSize:], nil)
 }
 
 func NewLocalAESKMSService(key string) *LocalAESKMSService {
