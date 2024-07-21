@@ -91,7 +91,7 @@ func (g *Plugin) Status(ctx context.Context, request *StatusRequest) (*StatusRes
 	}
 	resp, err := g.keyService.Encrypt(g.keyURI, &cloudkms.EncryptRequest{
 		Plaintext: ping,
-	}).Context(ctx).Do()
+	}).Context(context.Background()).Do()
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
 		statusResp.Healthz = keyNotReachable
@@ -110,7 +110,7 @@ func (g *Plugin) Encrypt(ctx context.Context, request *EncryptRequest) (*Encrypt
 
 	resp, err := g.keyService.Encrypt(g.keyURI, &cloudkms.EncryptRequest{
 		Plaintext: base64.StdEncoding.EncodeToString(request.Plaintext),
-	}).Context(ctx).Do()
+	}).Context(context.Background()).Do()
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
 		return nil, err
@@ -143,7 +143,7 @@ func (g *Plugin) Decrypt(ctx context.Context, request *DecryptRequest) (*Decrypt
 	}
 	resp, err := g.keyService.Decrypt(keyResourceName, &cloudkms.DecryptRequest{
 		Ciphertext: base64.StdEncoding.EncodeToString(request.Ciphertext),
-	}).Context(ctx).Do()
+	}).Context(context.Background()).Do()
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("decrypt").Inc()
 		return nil, err
