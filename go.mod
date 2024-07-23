@@ -1,13 +1,11 @@
 module github.com/GoogleCloudPlatform/k8s-cloudkms-plugin
 
-go 1.22
-
-toolchain go1.22.0
+go 1.22.0
 
 require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/glog v1.2.0
-	github.com/golang/protobuf v1.5.3
+	github.com/golang/protobuf v1.5.4
 	github.com/google/go-cmp v0.6.0
 	github.com/google/go-tpm v0.9.0
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
@@ -19,8 +17,9 @@ require (
 	google.golang.org/api v0.167.0
 	google.golang.org/grpc v1.62.0
 	gopkg.in/gcfg.v1 v1.2.3
-	k8s.io/api v0.29.2
-	k8s.io/apimachinery v0.29.2
+	k8s.io/api v0.30.3
+	k8s.io/apimachinery v0.30.3
+	k8s.io/apiserver v0.30.3
 )
 
 require (
@@ -63,7 +62,11 @@ require (
 )
 
 require (
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	k8s.io/component-base v0.30.3 // indirect
+	sigs.k8s.io/yaml v1.3.0 // indirect
 )

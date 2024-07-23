@@ -19,7 +19,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -28,11 +27,8 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/k8s-cloudkms-plugin/plugin"
-	v1 "github.com/GoogleCloudPlatform/k8s-cloudkms-plugin/plugin/v1"
 	v2 "github.com/GoogleCloudPlatform/k8s-cloudkms-plugin/plugin/v2"
 	"github.com/golang/glog"
-	"google.golang.org/api/cloudkms/v1"
-	"google.golang.org/api/option"
 )
 
 var (
@@ -52,6 +48,9 @@ var (
 	// Integration testing arguments.
 	integrationTest = flag.Bool("integration-test", false, "When set to true, http.DefaultClient will be used, as opposed callers identity acquired with a TokenService.")
 	fakeKMSPort     = flag.Int("fake-kms-port", 8085, "Port for Fake KMS, only use in integration tests.")
+
+	// Local aes kms service only
+	cipherKey = flag.String("aes-secret-key", "passphrasewhichneedstobe32bytes!", "sets the aes secret key for use with local aes kms")
 )
 
 func main() {
@@ -61,30 +60,43 @@ func main() {
 
 	flag.Parse()
 	mustValidateFlags()
+	_ = ctx
 
-	var (
-		httpClient = http.DefaultClient
-		err        error
-	)
+	// var (
+	// 	httpClient = http.DefaultClient
+	// 	err        error
+	// )
 
-	if !*integrationTest {
-		// httpClient should be constructed with context.Background. Sending a context with
-		// timeout or deadline will cause subsequent calls via the client to fail once the timeout or
-		// deadline is triggered. Instead, the plugin supplies a context per individual calls.
-		httpClient, err = plugin.NewHTTPClient(ctx, *gceConf)
-		if err != nil {
-			glog.Exitf("failed to instantiate http httpClient: %v", err)
-		}
-	}
+	// if !*integrationTest {
+	// 	// httpClient should be constructed with context.Background. Sending a context with
+	// 	// timeout or deadline will cause subsequent calls via the client to fail once the timeout or
+	// 	// deadline is triggered. Instead, the plugin supplies a context per individual calls.
+	// 	httpClient, err = plugin.NewHTTPClient(context.Background(), *gceConf)
+	// 	if err != nil {
+	// 		glog.Exitf("failed to instantiate http httpClient: %v", err)
+	// 	}
+	// }
 
-	kms, err := cloudkms.NewService(ctx, option.WithHTTPClient(httpClient))
-	if err != nil {
-		glog.Exitf("failed to instantiate cloud kms httpClient: %v", err)
-	}
+	// ctx := context.Background()
+	// kms, err := cloudkms.NewService(ctx, option.WithHTTPClient(httpClient))
+	// if err != nil {
+	// 	glog.Exitf("failed to instantiate cloud kms httpClient: %v", err)
+	// }
 
-	if *integrationTest {
-		kms.BasePath = fmt.Sprintf("http://localhost:%d", *fakeKMSPort)
-	}
+	// if *integrationTest {
+	// 	kms.BasePath = fmt.Sprintf("http://localhost:%d", *fakeKMSPort)
+	// }
+
+	// healthz := &plugin.HealthZ{
+	// 	KeyName:        *keyURI,
+	// 	KeyService:     kms.Projects.Locations.KeyRings.CryptoKeys,
+	// 	UnixSocketPath: *pathToUnixSocket,
+	// 	CallTimeout:    *healthzTimeout,
+	// 	ServingURL: &url.URL{
+	// 		Host: net.JoinHostPort("localhost", strconv.FormatUint(uint64(*healthzPort), 10)),
+	// 		Path: *healthzPath,
+	// 	},
+	// }
 
 	metrics := &plugin.Metrics{
 		ServingURL: &url.URL{
@@ -94,36 +106,35 @@ func main() {
 	}
 
 	var p plugin.Plugin
-	var healthChecker plugin.HealthChecker
+	// var healthChecker plugin.HealthChecker
 	switch *kmsVersion {
 	case "v1":
-		p = v1.NewPlugin(kms.Projects.Locations.KeyRings.CryptoKeys, *keyURI)
-		healthChecker = v1.NewHealthChecker()
-		glog.Info("Kubernetes KMS API v1beta1")
+		panic("KMS v1 is not supported, exiting...")
 	case "v2":
-		p = v2.NewPlugin(kms.Projects.Locations.KeyRings.CryptoKeys, *keyURI, *keySuffix)
-		healthChecker = v2.NewHealthChecker()
+		l := plugin.NewLocalAESKMSService(*cipherKey)
+		p = v2.NewPlugin(l, *keyURI, *keySuffix)
+		// healthChecker = v2.NewHealthChecker()
 		glog.Info("Kubernetes KMS API v2")
 	default:
 		glog.Exitf("invalid value %q for --kms", *kmsVersion)
 	}
 
-	hc := plugin.NewHealthChecker(healthChecker, *keyURI, kms.Projects.Locations.KeyRings.CryptoKeys, *pathToUnixSocket, *healthzTimeout, &url.URL{
-		Host: fmt.Sprintf("localhost:%d", *healthzPort),
-		Path: *healthzPath,
-	})
+	// hc := plugin.NewHealthChecker(healthChecker, *keyURI, kms.Projects.Locations.KeyRings.CryptoKeys, *pathToUnixSocket, *healthzTimeout, &url.URL{
+	// 	Host: fmt.Sprintf("localhost:%d", *healthzPort),
+	// 	Path: *healthzPath,
+	// })
 
 	pluginManager := plugin.NewManager(p, *pathToUnixSocket)
 
-	glog.Exit(run(pluginManager, hc, metrics))
+	glog.Exit(run(pluginManager, nil, metrics))
 }
 
-func run(pluginManager *plugin.PluginManager, h *plugin.HealthCheckerManager, m *plugin.Metrics) error {
+func run(pluginManager *plugin.PluginManager, _ *plugin.HealthCheckerManager, m *plugin.Metrics) error {
 	signalsChan := make(chan os.Signal, 1)
 	signal.Notify(signalsChan, syscall.SIGINT, syscall.SIGTERM)
 
-	metricsErrCh := m.Serve()
-	healthzErrCh := h.Serve()
+	metricsErrChan := m.Serve()
+	// healthzErrChan := h.Serve()
 
 	gRPCSrv, kmsErrorCh := pluginManager.Start()
 	defer gRPCSrv.GracefulStop()
@@ -134,14 +145,14 @@ func run(pluginManager *plugin.PluginManager, h *plugin.HealthCheckerManager, m 
 			return fmt.Errorf("captured %v, shutting down kms-plugin", sig)
 		case kmsError := <-kmsErrorCh:
 			return kmsError
-		case metricsErr := <-metricsErrCh:
+		case metricsErr := <-metricsErrChan:
 			// Limiting this to warning only - will run without metrics.
 			glog.Warning(metricsErr)
-			metricsErrCh = nil
-		case healthzErr := <-healthzErrCh:
-			// Limiting this to warning only - will run without healthz.
-			glog.Warning(healthzErr)
-			healthzErrCh = nil
+			metricsErrChan = nil
+			// case healthzErr := <-healthzErrCh:
+			// 	// Limiting this to warning only - will run without healthz.
+			// 	glog.Warning(healthzErr)
+			// 	healthzErrCh = nil
 		}
 	}
 }

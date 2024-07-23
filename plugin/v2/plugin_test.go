@@ -109,7 +109,8 @@ func setUp(t *testing.T, fakeKMSSrv *fakekms.Server, keyName string, keySuffix s
 		t.Fatalf("failed to instantiate cloud kms httpClient: %v", err)
 	}
 	fakeKMSKeyService.BasePath = fakeKMSSrv.URL()
-	p := NewPlugin(fakeKMSKeyService.Projects.Locations.KeyRings.CryptoKeys, keyName, keySuffix)
+
+	p := NewPlugin(plugin.NewLocalAESKMSService("passphrasewhichneedstobe32bytes!"), keyName, keySuffix)
 	pluginManager := plugin.NewManager(p, socket)
 	pluginRPCSrv, errCh := pluginManager.Start()
 	// Giving some time for plugin to start while listening on the error channel.

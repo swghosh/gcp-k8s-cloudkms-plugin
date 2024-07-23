@@ -16,15 +16,12 @@
 package v2
 
 import (
-	"regexp"
 	"sync"
 
 	"google.golang.org/api/cloudkms/v1"
 	grpc "google.golang.org/grpc"
 
 	"context"
-	"encoding/base64"
-	"fmt"
 	"time"
 
 	"github.com/GoogleCloudPlatform/k8s-cloudkms-plugin/plugin"
@@ -40,14 +37,12 @@ const (
 )
 
 // Regex to extract Cloud KMS key resource name from the key version resource name
-var keyResourceRegEx = regexp.MustCompile(`projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/cryptoKeys\/[^/:]+`)
+// var keyResourceRegEx = regexp.MustCompile(`projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/cryptoKeys\/[^/:]+`)
 
 var _ plugin.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
-	keyService *cloudkms.ProjectsLocationsKeyRingsCryptoKeysService
-	keyURI     string
-	keySuffix  string
+	keyService *plugin.LocalAESKMSService
 
 	// lastKeyID stores the last known primary key version resource name to return
 	// as KeyId in case when the Cloud KMS service is not reachable because KeyId
@@ -58,11 +53,9 @@ type Plugin struct {
 }
 
 // New constructs Plugin.
-func NewPlugin(keyService *cloudkms.ProjectsLocationsKeyRingsCryptoKeysService, keyURI, keySuffix string) *Plugin {
+func NewPlugin(keyService *plugin.LocalAESKMSService, keyURI, _ string) *Plugin {
 	p := &Plugin{
 		keyService: keyService,
-		keyURI:     keyURI,
-		keySuffix:  keySuffix,
 	}
 	p.setKeyID(keyURI)
 
@@ -83,21 +76,23 @@ func (g *Plugin) Status(ctx context.Context, request *StatusRequest) (*StatusRes
 	defer plugin.RecordCloudKMSOperation("encrypt", time.Now().UTC())
 
 	keyID := g.keyID()
+	glog.V(4).Infof("Processing status request using %s", keyID)
 
 	statusResp := &StatusResponse{
 		Version: apiVersion,
 		KeyId:   keyID,
 		Healthz: ok,
 	}
-	resp, err := g.keyService.Encrypt(g.keyURI, &cloudkms.EncryptRequest{
+	_, err := g.keyService.Encrypt(&cloudkms.EncryptRequest{
 		Plaintext: ping,
-	}).Context(ctx).Do()
+	})
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
 		statusResp.Healthz = keyNotReachable
-	} else {
-		g.setKeyID(resp.Name)
 	}
+	// else {
+	// 	g.setKeyID(resp.Name)
+	// }
 
 	glog.V(4).Infof("Status response: %s", statusResp.Healthz)
 	return statusResp, nil
@@ -105,29 +100,25 @@ func (g *Plugin) Status(ctx context.Context, request *StatusRequest) (*StatusRes
 
 // Encrypt encrypts payload provided by K8S API Server.
 func (g *Plugin) Encrypt(ctx context.Context, request *EncryptRequest) (*EncryptResponse, error) {
-	glog.V(4).Infof("Processing request for encryption %s using %s", request.Uid, g.keyURI)
+	glog.V(4).Infof("Processing request for encryption %s using %s", request.Uid, g.lastKeyID)
 	defer plugin.RecordCloudKMSOperation("encrypt", time.Now().UTC())
 
-	resp, err := g.keyService.Encrypt(g.keyURI, &cloudkms.EncryptRequest{
-		Plaintext: base64.StdEncoding.EncodeToString(request.Plaintext),
-	}).Context(ctx).Do()
+	resp, err := g.keyService.Encrypt(&cloudkms.EncryptRequest{
+		Plaintext: string(request.Plaintext),
+	})
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("encrypt").Inc()
 		return nil, err
 	}
 
-	cipher, err := base64.StdEncoding.DecodeString(resp.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-
+	resp.Name = g.keyID()
 	keyID := g.setKeyID(resp.Name)
 
 	glog.V(4).Infof("Processed request for encryption %s using %s",
 		request.Uid, keyID)
 
 	return &EncryptResponse{
-		Ciphertext: cipher,
+		Ciphertext: []byte(resp.Ciphertext),
 		KeyId:      keyID,
 	}, nil
 }
@@ -137,25 +128,16 @@ func (g *Plugin) Decrypt(ctx context.Context, request *DecryptRequest) (*Decrypt
 	glog.V(4).Infof("Processing request for decryption %s using %s", request.Uid, request.KeyId)
 	defer plugin.RecordCloudKMSOperation("decrypt", time.Now().UTC())
 
-	keyResourceName := g.keyURI
-	if request.KeyId != "" { // request.KeyId is empty when health checker calls this method from PingKMS()
-		keyResourceName = extractKeyName(request.KeyId)
-	}
-	resp, err := g.keyService.Decrypt(keyResourceName, &cloudkms.DecryptRequest{
-		Ciphertext: base64.StdEncoding.EncodeToString(request.Ciphertext),
-	}).Context(ctx).Do()
+	resp, err := g.keyService.Decrypt(&cloudkms.DecryptRequest{
+		Ciphertext: string(request.Ciphertext),
+	})
 	if err != nil {
 		plugin.CloudKMSOperationalFailuresTotal.WithLabelValues("decrypt").Inc()
 		return nil, err
 	}
 
-	plain, err := base64.StdEncoding.DecodeString(resp.Plaintext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode from base64, error: %w", err)
-	}
-
 	return &DecryptResponse{
-		Plaintext: plain,
+		Plaintext: []byte(resp.Plaintext),
 	}, nil
 }
 
@@ -174,18 +156,8 @@ func (g *Plugin) keyID() string {
 // reconfigured to use a Cloud KMS key version which has been already in use
 // before
 func (g *Plugin) setKeyID(name string) string {
-	result := name
-	if v := g.keySuffix; v != "" {
-		result = result + ":" + v
-	}
-
 	g.lastKeyIDLock.Lock()
 	defer g.lastKeyIDLock.Unlock()
-	g.lastKeyID = result
-	return result
-}
-
-// Extracts the Cloud KMS key resource name from the key version resource name
-func extractKeyName(keyVersionId string) string {
-	return keyResourceRegEx.FindString(keyVersionId)
+	g.lastKeyID = name
+	return name
 }
